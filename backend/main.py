@@ -102,17 +102,34 @@ class FloorPlan(BaseModel):
     dimensions: list
 
 
+def parse_json_response(raw: str) -> dict:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    if raw.endswith("```"):
+        raw = raw[:-3]
+    return json.loads(raw.strip())
+
+
 @app.post("/analyze")
-async def analyze_sketch(file: UploadFile = File(...)):
+async def analyze_sketch(
+    file: UploadFile = File(...),
+    space_width: float = 0,
+    space_height: float = 0,
+):
     """上傳草圖，回傳解析後的平面圖 JSON"""
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="請上傳圖片檔案")
 
     image_data = await file.read()
     base64_image = base64.standard_b64encode(image_data).decode("utf-8")
-
-    ext = file.content_type.split("/")[-1]
     media_type = file.content_type
+
+    dimension_hint = ""
+    if space_width > 0 and space_height > 0:
+        dimension_hint = f"\n\n【重要】設計師已確認此空間的實際尺寸為：寬 {space_width} 公分 × 深 {space_height} 公分。請以此為基準推算所有座標，canvas_width 設為 {space_width}，canvas_height 設為 {space_height}。"
 
     message = client.messages.create(
         model="claude-opus-4-6",
@@ -131,24 +148,47 @@ async def analyze_sketch(file: UploadFile = File(...)):
                     },
                     {
                         "type": "text",
-                        "text": ANALYZE_PROMPT,
+                        "text": ANALYZE_PROMPT + dimension_hint,
                     },
                 ],
             }
         ],
     )
 
-    raw = message.content[0].text.strip()
+    floor_plan = parse_json_response(message.content[0].text)
+    return floor_plan
 
-    # 清除可能的 markdown code block
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    if raw.endswith("```"):
-        raw = raw[:-3]
 
-    floor_plan = json.loads(raw.strip())
+class RefineRequest(BaseModel):
+    floor_plan: dict
+    instruction: str
+
+
+@app.post("/refine")
+async def refine_floor_plan(req: RefineRequest):
+    """根據文字指令修改現有平面圖"""
+    refine_prompt = f"""你是室內設計專家。以下是目前的平面圖 JSON，請根據設計師的修改指令調整，回傳更新後的完整 JSON。
+
+目前平面圖：
+{json.dumps(req.floor_plan, ensure_ascii=False, indent=2)}
+
+修改指令：{req.instruction}
+
+規則：
+1. 所有線條都要是聚合線
+2. 牆厚預設 10 cm
+3. 只回傳 JSON，不要有任何說明文字
+4. 座標系統：左上角為原點(0,0)，X向右，Y向下
+5. 保留所有未被修改指令影響的元素，只調整相關部分
+"""
+
+    message = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=4096,
+        messages=[{"role": "user", "content": refine_prompt}],
+    )
+
+    floor_plan = parse_json_response(message.content[0].text)
     return floor_plan
 
 

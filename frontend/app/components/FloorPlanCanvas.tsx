@@ -222,6 +222,31 @@ export default function FloorPlanCanvas({
     }
   };
 
+  // 將牆面端點對齊到最近的 0°/45°/90°/135°
+  const snapWall = (x1: number, y1: number, x2: number, y2: number) => {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len === 0) return { x1, y1, x2, y2 };
+
+    const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+    const snapAngles = [0, 45, 90, 135, 180, -135, -90, -45];
+    const closest = snapAngles.reduce((prev, curr) =>
+      Math.abs(curr - angleDeg) < Math.abs(prev - angleDeg) ? curr : prev
+    );
+
+    const SNAP_THRESHOLD = 8; // 8度以內自動吸附
+    if (Math.abs(closest - angleDeg) > SNAP_THRESHOLD) return { x1, y1, x2, y2 };
+
+    const rad = (closest * Math.PI) / 180;
+    return {
+      x1,
+      y1,
+      x2: x1 + Math.cos(rad) * len,
+      y2: y1 + Math.sin(rad) * len,
+    };
+  };
+
   const handleMouseMove = (e: React.MouseEvent) => {
     if (isPanning) {
       setOffset((prev) => ({
@@ -236,18 +261,17 @@ export default function FloorPlanCanvas({
       const { x, y } = toWorld(e.clientX, e.clientY);
       const dx = x - dragging.startX;
       const dy = y - dragging.startY;
+
+      const newX1 = dragging.origX1 + dx;
+      const newY1 = dragging.origY1 + dy;
+      const newX2 = dragging.origX2 + dx;
+      const newY2 = dragging.origY2 + dy;
+      const snapped = snapWall(newX1, newY1, newX2, newY2);
+
       onFloorPlanChange({
         ...floorPlan,
         walls: floorPlan.walls.map((w) =>
-          w.id === dragging.id
-            ? {
-                ...w,
-                x1: dragging.origX1 + dx,
-                y1: dragging.origY1 + dy,
-                x2: dragging.origX2 + dx,
-                y2: dragging.origY2 + dy,
-              }
-            : w
+          w.id === dragging.id ? { ...w, ...snapped } : w
         ),
       });
     }
