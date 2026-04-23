@@ -2,6 +2,7 @@ import os
 import base64
 import json
 import io
+import math
 import tempfile
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,7 +42,7 @@ ANALYZE_PROMPT = """你是一個專業的室內設計平面圖解析助理。
       "y1": <起點Y公分>,
       "x2": <終點X公分>,
       "y2": <終點Y公分>,
-      "thickness": <牆厚公分，預設15>
+      "thickness": <牆厚公分，預設10>
     }
   ],
   "doors": [
@@ -161,37 +162,39 @@ async def generate_dxf(floor_plan: dict):
     doc.layers.add("ROOMS", color=2)
     doc.layers.add("DIMENSIONS", color=3)
 
-    # 牆面
+    # 牆面（聚合線，帶寬度表示牆厚）
     for wall in floor_plan.get("walls", []):
-        msp.add_line(
-            (wall["x1"], -wall["y1"]),
-            (wall["x2"], -wall["y2"]),
+        thickness = wall.get("thickness", 10)
+        pline = msp.add_lwpolyline(
+            [(wall["x1"], -wall["y1"]), (wall["x2"], -wall["y2"])],
             dxfattribs={"layer": "WALLS", "lineweight": 50},
         )
+        pline.dxf.const_width = thickness
 
-    # 門（弧線表示）
+    # 門（聚合線弧線表示）
     for door in floor_plan.get("doors", []):
         x, y, w = door["x"], door["y"], door["width"]
-        msp.add_arc(
-            center=(x, -y),
-            radius=w,
-            start_angle=0,
-            end_angle=90,
+        # 門板線
+        msp.add_lwpolyline(
+            [(x, -y), (x + w, -y)],
             dxfattribs={"layer": "DOORS"},
         )
-        msp.add_line((x, -y), (x + w, -y), dxfattribs={"layer": "DOORS"})
+        # 開門弧（用多段折線近似四分之一圓）
+        arc_points = [
+            (x + w * math.cos(math.radians(a)), -y + w * math.sin(math.radians(a)))
+            for a in range(0, 91, 10)
+        ]
+        msp.add_lwpolyline(arc_points, dxfattribs={"layer": "DOORS"})
 
-    # 窗戶（雙線表示）
+    # 窗戶（雙聚合線表示）
     for win in floor_plan.get("windows", []):
         offset = 5
-        msp.add_line(
-            (win["x1"], -win["y1"]),
-            (win["x2"], -win["y2"]),
+        msp.add_lwpolyline(
+            [(win["x1"], -win["y1"]), (win["x2"], -win["y2"])],
             dxfattribs={"layer": "WINDOWS"},
         )
-        msp.add_line(
-            (win["x1"], -win["y1"] - offset),
-            (win["x2"], -win["y2"] - offset),
+        msp.add_lwpolyline(
+            [(win["x1"], -win["y1"] - offset), (win["x2"], -win["y2"] - offset)],
             dxfattribs={"layer": "WINDOWS"},
         )
 

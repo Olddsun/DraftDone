@@ -81,7 +81,7 @@ export default function FloorPlanCanvas({
       ctx.moveTo(wall.x1, wall.y1);
       ctx.lineTo(wall.x2, wall.y2);
       ctx.strokeStyle = isSelected ? "#d97706" : "#1a1a1a";
-      ctx.lineWidth = (wall.thickness || 15) / scale;
+      ctx.lineWidth = (wall.thickness || 10) / scale;
       ctx.lineCap = "square";
       ctx.stroke();
 
